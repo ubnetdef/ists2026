@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # remove-other-users.sh
 # Removes all local users except the currently logged-in user.
