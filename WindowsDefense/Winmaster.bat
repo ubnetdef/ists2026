@@ -22,53 +22,55 @@ echo ========================================
 echo.
 
 REM -----------------------------
-REM USER ACCOUNT REVIEW/REMOVAL (ONE CONFIRMATION)
+REM USER ACCOUNT REVIEW/REMOVAL (ONE CONFIRMATION) - FIXED
 REM -----------------------------
 echo [INTERACTIVE] Scanning for user accounts...
 echo.
 
-set "USERLIST="
+set "ULIST=%TEMP%\removable_users_%RANDOM%.txt"
+if exist "%ULIST%" del /f /q "%ULIST%" >nul 2>&1
 
-REM Collect removable users (skip built-in/system accounts)
-for /f "usebackq delims=" %%u in (`
-  powershell -NoProfile -Command ^
-    "$skip=@('Administrator','DefaultAccount','Guest','WDAGUtilityAccount');" ^
-    "Get-LocalUser | Where-Object { $_.Name -notlike '*$' -and ($skip -notcontains $_.Name) } |" ^
-    "Sort-Object Name | Select-Object -ExpandProperty Name"
-`) do (
-  echo  - %%u
-  set "USERLIST=!USERLIST!|%%u"
-)
+REM Collect removable users into a temp file
+powershell -NoProfile -Command ^
+  "$skip=@('Administrator','DefaultAccount','Guest','WDAGUtilityAccount');" ^
+  "Get-LocalUser | Where-Object { $_.Name -notlike '*$' -and ($skip -notcontains $_.Name) } |" ^
+  "Sort-Object Name | Select-Object -ExpandProperty Name" ^
+  > "%ULIST%" 2>nul
 
-if not defined USERLIST (
+REM If file empty, nothing to do
+for %%A in ("%ULIST%") do if %%~zA equ 0 (
   echo [DONE] No removable local users found.
   echo.
-) else (
+  goto :after_users
+)
+
+echo Users that will be removed if you confirm:
+for /f "usebackq delims=" %%u in ("%ULIST%") do echo  - %%u
+
+echo.
+set /p "CONFIRM_USERS=Remove ALL users listed above? Type YES to continue: "
+if /i not "%CONFIRM_USERS%"=="YES" (
+  echo [SKIP] User removal cancelled.
   echo.
-  set /p "CONFIRM_USERS=Remove ALL users listed above? Type YES to continue: "
-  if /i not "!CONFIRM_USERS!"=="YES" (
-    echo [SKIP] User removal cancelled.
-    echo.
+  goto :after_users
+)
+
+echo [RUN] Removing users...
+for /f "usebackq delims=" %%u in ("%ULIST%") do (
+  net user "%%u" /delete >nul 2>&1
+  if !errorlevel! equ 0 (
+    echo [DONE] User %%u removed.
+    if defined REMOVED_USERS (set "REMOVED_USERS=!REMOVED_USERS!, %%u") else set "REMOVED_USERS=%%u"
+    if exist "C:\Users\%%u" rmdir /s /q "C:\Users\%%u" >nul 2>&1
   ) else (
-    echo [RUN] Removing users...
-    for %%z in ("!USERLIST:|=" "!") do (
-      for %%u in (%%~z) do (
-        net user "%%u" /delete >nul 2>&1
-        if !errorlevel! equ 0 (
-          echo [DONE] User %%u removed.
-          set "REMOVED_USERS=!REMOVED_USERS!;%%u"
-          if exist "C:\Users\%%u" (
-            rmdir /s /q "C:\Users\%%u" >nul 2>&1
-          )
-        ) else (
-          echo [ERROR] Failed to remove user %%u.
-          set "FAILED_USERS=!FAILED_USERS!;%%u"
-        )
-      )
-    )
-    echo.
+    echo [ERROR] Failed to remove user %%u.
+    if defined FAILED_USERS (set "FAILED_USERS=!FAILED_USERS!, %%u") else set "FAILED_USERS=%%u"
   )
 )
+echo.
+
+:after_users
+if exist "%ULIST%" del /f /q "%ULIST%" >nul 2>&1
 
 echo.
 echo ========================================
@@ -78,11 +80,9 @@ echo.
 
 echo [STEP 1] Cleaning suspicious startup locations...
 
-REM Remove suspicious Run registry entries (example)
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "OneDrive" /f >nul 2>&1
 reg delete "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "OneDrive" /f >nul 2>&1
 
-REM Startup folder (FIXED QUOTING FOR SPACES)
 for %%f in ("%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\*") do (
   if exist "%%~f" (
     if /i "%%~xf"==".exe" del /f /q "%%~f" >nul 2>&1
@@ -119,8 +119,6 @@ echo.
 echo [STEP 4] Cleaning browser hijacking entries...
 reg delete "HKLM\SOFTWARE\Microsoft\Internet Explorer\SearchScopes" /v "DefaultScope" /f >nul 2>&1
 reg delete "HKCU\SOFTWARE\Microsoft\Internet Explorer\SearchScopes" /v "DefaultScope" /f >nul 2>&1
-
-REM Nuke Chrome extension key (no prompts)
 reg delete "HKCU\SOFTWARE\Google\Chrome\Extensions" /f >nul 2>&1
 echo [DONE] Browser hijacking cleaned.
 
@@ -216,19 +214,13 @@ echo [DONE] SSH registry entries removed.
 
 echo.
 echo [STEP 15] Removing SSH directories...
-if exist "%ProgramFiles%\OpenSSH" (
-  rmdir /s /q "%ProgramFiles%\OpenSSH" >nul 2>&1
-)
-if exist "%ProgramData%\ssh" (
-  rmdir /s /q "%ProgramData%\ssh" >nul 2>&1
-)
+if exist "%ProgramFiles%\OpenSSH" rmdir /s /q "%ProgramFiles%\OpenSSH" >nul 2>&1
+if exist "%ProgramData%\ssh" rmdir /s /q "%ProgramData%\ssh" >nul 2>&1
 
 echo.
 echo [STEP 16] Removing SSH user profiles...
 for /d %%u in ("%systemdrive%\Users\*") do (
-  if exist "%%~u\.ssh" (
-    rmdir /s /q "%%~u\.ssh" >nul 2>&1
-  )
+  if exist "%%~u\.ssh" rmdir /s /q "%%~u\.ssh" >nul 2>&1
 )
 
 echo.
